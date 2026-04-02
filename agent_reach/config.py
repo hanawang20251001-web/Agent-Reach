@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """Configuration management for Agent Reach.
 
-Stores settings in ~/.agent-reach/config.yaml.
-Auto-creates directory on first use.
+Stores settings in ``~/.agent-reach/config.yaml`` by default.
+Falls back to a writable local directory when the home directory is blocked.
 """
 
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Optional
 
@@ -17,6 +18,7 @@ class Config:
 
     CONFIG_DIR = Path.home() / ".agent-reach"
     CONFIG_FILE = CONFIG_DIR / "config.yaml"
+    CONFIG_DIR_ENV = "AGENT_REACH_CONFIG_DIR"
 
     # Feature → required config keys
     FEATURE_REQUIREMENTS = {
@@ -27,15 +29,47 @@ class Config:
     }
 
     def __init__(self, config_path: Optional[Path] = None):
-        self.config_path = Path(config_path) if config_path else self.CONFIG_FILE
+        self.config_path = Path(config_path) if config_path else self._resolve_config_file()
         self.config_dir = self.config_path.parent
         self.data: dict = {}
         self._ensure_dir()
         self.load()
 
+    @classmethod
+    def _resolve_config_file(cls) -> Path:
+        """Resolve the config file path, preferring explicit overrides."""
+        env_dir = os.environ.get(cls.CONFIG_DIR_ENV)
+        if env_dir:
+            return Path(env_dir).expanduser() / "config.yaml"
+        return cls.CONFIG_FILE
+
+    @classmethod
+    def _fallback_config_dir(cls) -> Path:
+        """Return a writable fallback config directory."""
+        cwd = Path.cwd() / ".agent-reach"
+        if cls._can_create_dir(cwd):
+            return cwd
+        return Path(tempfile.gettempdir()) / "agent-reach"
+
+    @staticmethod
+    def _can_create_dir(path: Path) -> bool:
+        """Best-effort check whether a directory can be created."""
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            return True
+        except OSError:
+            return False
+
     def _ensure_dir(self):
-        """Create config directory if it doesn't exist."""
-        self.config_dir.mkdir(parents=True, exist_ok=True)
+        """Create config directory, falling back when home is not writable."""
+        try:
+            self.config_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            if self.config_path != self.CONFIG_FILE:
+                raise
+            self.config_dir = self._fallback_config_dir()
+            self.config_path = self.config_dir / self.config_path.name
+            self.config_dir.mkdir(parents=True, exist_ok=True)
 
     def load(self):
         """Load config from YAML file."""

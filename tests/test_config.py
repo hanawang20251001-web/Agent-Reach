@@ -19,10 +19,36 @@ def tmp_config(tmp_path):
 
 
 class TestConfig:
+    def test_resolve_config_file_from_env(self, monkeypatch):
+        monkeypatch.setenv("AGENT_REACH_CONFIG_DIR", "C:/tmp/agent-reach-config")
+        assert Config._resolve_config_file() == Path("C:/tmp/agent-reach-config/config.yaml")
+
     def test_init_creates_dir(self, tmp_path):
         config_file = tmp_path / "subdir" / "config.yaml"
         config = Config(config_path=config_file)
         assert config_file.parent.exists()
+
+    def test_init_falls_back_when_default_home_dir_is_blocked(self, tmp_path, monkeypatch):
+        blocked = Path("C:/blocked-home/.agent-reach")
+        fallback = tmp_path / ".agent-reach"
+
+        monkeypatch.setattr(Config, "CONFIG_DIR", blocked)
+        monkeypatch.setattr(Config, "CONFIG_FILE", blocked / "config.yaml")
+        monkeypatch.setattr(Path, "cwd", staticmethod(lambda: tmp_path))
+
+        original_mkdir = Path.mkdir
+
+        def fake_mkdir(self, parents=False, exist_ok=False):
+            if self == blocked:
+                raise PermissionError("blocked")
+            return original_mkdir(self, parents=parents, exist_ok=exist_ok)
+
+        monkeypatch.setattr(Path, "mkdir", fake_mkdir)
+
+        config = Config()
+        assert config.config_dir == fallback
+        assert config.config_path == fallback / "config.yaml"
+        assert fallback.exists()
 
     def test_set_and_get(self, tmp_config):
         tmp_config.set("test_key", "test_value")
